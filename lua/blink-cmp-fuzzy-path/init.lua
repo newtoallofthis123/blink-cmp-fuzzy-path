@@ -66,27 +66,33 @@ function Source:get_completions(ctx, callback)
   -- Get current buffer path for relative path calculation
   local bufpath = vim.api.nvim_buf_get_name(ctx.bufnr or 0)
 
-  -- Perform file search (synchronous for MVP)
-  local files = file_search.search_files(query, self.config, bufpath)
+  -- Perform file search (async)
+  local cancel_fn = file_search.search_files_async(query, self.config, bufpath, function(files)
+    -- Convert to completion items
+    local items = {}
+    for index, file in ipairs(files) do
+      table.insert(items, {
+        label = file,
+        kind = vim.lsp.protocol.CompletionItemKind.File,
+        insertText = file,
+        filterText = file,
+        -- Use lower sortText values to prioritize these results
+        -- Format: "0000", "0001", "0002" ensures they sort before most other sources
+        sortText = string.format("%04d", index),
+        score_offset = 5,  -- Boost score for this source
+      })
+    end
 
-  -- Convert to completion items
-  local items = {}
-  for index, file in ipairs(files) do
-    table.insert(items, {
-      label = file,
-      kind = vim.lsp.protocol.CompletionItemKind.File,
-      insertText = file,
-      filterText = file,
-      sortText = string.format("%03d", index),
+    -- Call callback with results
+    callback({
+      items = items,
+      is_incomplete_forward = true,  -- Refetch as user types more
+      is_incomplete_backward = true, -- Refetch as user deletes characters
     })
-  end
+  end)
 
-  -- Call callback with results
-  callback({
-    items = items,
-    is_incomplete_forward = true,  -- Refetch as user types more
-    is_incomplete_backward = true, -- Refetch as user deletes characters
-  })
+  -- Return cancellation function so blink.cmp can cancel if user types quickly
+  return cancel_fn
 end
 
 -- Setup function for lazy.nvim

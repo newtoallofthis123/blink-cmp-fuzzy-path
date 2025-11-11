@@ -30,10 +30,11 @@ local function make_relative_path(filepath, bufpath)
   return vim.fn.fnamemodify(abs_filepath, ":~:.")
 end
 
--- Search files using fd (synchronous)
-local function search_with_fd(query, config)
+-- Search files using fd (async)
+local function search_with_fd_async(query, config, callback)
   if not command_exists("fd") then
-    return {}
+    callback({})
+    return nil
   end
 
   local args = { "--type", "f" }
@@ -56,22 +57,64 @@ local function search_with_fd(query, config)
     table.insert(args, query)
   end
 
-  local cmd = "fd " .. table.concat(vim.tbl_map(function(arg)
-    return vim.fn.shellescape(arg)
-  end, args), " ")
+  local stdout = vim.loop.new_pipe(false)
+  local handle, pid
+  local results = {}
+  local stdout_data = ""
 
-  local files = vim.fn.systemlist(cmd)
-  if vim.v.shell_error ~= 0 then
-    return {}
+  handle, pid = vim.loop.spawn('fd', {
+    args = args,
+    stdio = { nil, stdout, nil }
+  }, vim.schedule_wrap(function(code, signal)
+    stdout:close()
+    if handle and not handle:is_closing() then
+      handle:close()
+    end
+
+    -- Process any remaining data
+    if stdout_data ~= "" then
+      for line in stdout_data:gmatch("([^\n]+)") do
+        if line ~= "" then
+          table.insert(results, line)
+        end
+      end
+    end
+
+    callback(results)
+  end))
+
+  if not handle then
+    callback({})
+    return nil
   end
 
-  return files
+  stdout:read_start(vim.schedule_wrap(function(err, data)
+    if err then
+      callback({})
+      return
+    end
+
+    if data then
+      stdout_data = stdout_data .. data
+    end
+  end))
+
+  -- Return cancellation function
+  return function()
+    if handle and not handle:is_closing() then
+      handle:close()
+    end
+    if stdout and not stdout:is_closing() then
+      stdout:close()
+    end
+  end
 end
 
--- Search files using ripgrep (synchronous)
-local function search_with_rg(query, config)
+-- Search files using ripgrep (async)
+local function search_with_rg_async(query, config, callback)
   if not command_exists("rg") then
-    return {}
+    callback({})
+    return nil
   end
 
   -- First get all files, then filter with query
@@ -85,61 +128,111 @@ local function search_with_rg(query, config)
     table.insert(args, "--no-ignore")
   end
 
-  local cmd = "rg " .. table.concat(vim.tbl_map(function(arg)
-    return vim.fn.shellescape(arg)
-  end, args), " ")
+  local stdout = vim.loop.new_pipe(false)
+  local handle, pid
+  local all_files = {}
+  local stdout_data = ""
 
-  local all_files = vim.fn.systemlist(cmd)
-  if vim.v.shell_error ~= 0 then
-    return {}
-  end
+  handle, pid = vim.loop.spawn('rg', {
+    args = args,
+    stdio = { nil, stdout, nil }
+  }, vim.schedule_wrap(function(code, signal)
+    stdout:close()
+    if handle and not handle:is_closing() then
+      handle:close()
+    end
 
-  -- Filter files by query if provided
-  if query and query ~= "" then
-    local filtered = {}
-    for _, file in ipairs(all_files) do
-      if string.find(file:lower(), query:lower(), 1, true) then
-        table.insert(filtered, file)
-        if #filtered >= config.max_results then
-          break
+    -- Process any remaining data
+    if stdout_data ~= "" then
+      for line in stdout_data:gmatch("([^\n]+)") do
+        if line ~= "" then
+          table.insert(all_files, line)
         end
       end
     end
-    return filtered
+
+    -- Filter files by query if provided
+    local results = {}
+    if query and query ~= "" then
+      for _, file in ipairs(all_files) do
+        if string.find(file:lower(), query:lower(), 1, true) then
+          table.insert(results, file)
+          if #results >= config.max_results then
+            break
+          end
+        end
+      end
+    else
+      -- Return limited results if no query
+      for i = 1, math.min(#all_files, config.max_results) do
+        table.insert(results, all_files[i])
+      end
+    end
+
+    callback(results)
+  end))
+
+  if not handle then
+    callback({})
+    return nil
   end
 
-  -- Return limited results if no query
-  return vim.list_slice(all_files, 1, config.max_results)
+  stdout:read_start(vim.schedule_wrap(function(err, data)
+    if err then
+      callback({})
+      return
+    end
+
+    if data then
+      stdout_data = stdout_data .. data
+    end
+  end))
+
+  -- Return cancellation function
+  return function()
+    if handle and not handle:is_closing() then
+      handle:close()
+    end
+    if stdout and not stdout:is_closing() then
+      stdout:close()
+    end
+  end
 end
 
--- Main search function
-function M.search_files(query, config, bufpath)
-  local files = {}
+-- Main search function (async)
+function M.search_files_async(query, config, bufpath, callback)
+  local search_func
 
   if config.search_tool == "fd" then
-    files = search_with_fd(query, config)
+    search_func = search_with_fd_async
   elseif config.search_tool == "rg" then
-    files = search_with_rg(query, config)
+    search_func = search_with_rg_async
   else
     -- Auto-detect: prefer fd, fallback to rg
     if command_exists("fd") then
-      files = search_with_fd(query, config)
+      search_func = search_with_fd_async
     elseif command_exists("rg") then
-      files = search_with_rg(query, config)
+      search_func = search_with_rg_async
     else
       vim.notify("blink-cmp-fuzzy-path: Neither 'fd' nor 'rg' found. Please install one.", vim.log.levels.WARN)
-      return {}
+      callback({})
+      return nil
     end
   end
 
-  -- Convert to relative paths if configured
-  if config.relative_paths and bufpath then
-    files = vim.tbl_map(function(file)
-      return make_relative_path(file, bufpath)
-    end, files)
-  end
+  -- Call search function and wrap callback to handle relative paths
+  local cancel_fn = search_func(query, config, function(files)
+    -- Convert to relative paths if configured
+    if config.relative_paths and bufpath then
+      files = vim.tbl_map(function(file)
+        return make_relative_path(file, bufpath)
+      end, files)
+    end
 
-  return files
+    callback(files)
+  end)
+
+  return cancel_fn
 end
 
 return M

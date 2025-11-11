@@ -2,6 +2,9 @@
 
 A Neovim plugin that provides fuzzy file path completion for [blink.cmp](https://github.com/saghen/blink.cmp). Type `@` (or a custom trigger) in configured filetypes to get intelligent file path suggestions.
 
+https://github.com/user-attachments/assets/dec72195-7088-4afd-b282-f77c8f880e42
+
+
 ## Features
 
 - 🎯 **Fuzzy file path completion** - Type `@` followed by a query to find files

@@ -2,237 +2,245 @@ local M = {}
 
 -- Check if a command exists
 local function command_exists(cmd)
-  return vim.fn.executable(cmd) == 1
+	return vim.fn.executable(cmd) == 1
 end
 
 -- Make path relative to current buffer's directory
 local function make_relative_path(filepath, bufpath)
-  if not bufpath or bufpath == "" then
-    return filepath
-  end
+	if not bufpath or bufpath == "" then
+		return filepath
+	end
 
-  local buf_dir = vim.fn.fnamemodify(bufpath, ":h")
-  local abs_filepath = vim.fn.fnamemodify(filepath, ":p")
+	local buf_dir = vim.fn.fnamemodify(bufpath, ":h")
+	local abs_filepath = vim.fn.fnamemodify(filepath, ":p")
 
-  -- If filepath is already relative, make it absolute first
-  if not vim.startswith(filepath, "/") then
-    abs_filepath = vim.fn.fnamemodify(vim.fn.getcwd() .. "/" .. filepath, ":p")
-  end
+	-- If filepath is already relative, make it absolute first
+	if not vim.startswith(filepath, "/") then
+		abs_filepath = vim.fn.fnamemodify(vim.fn.getcwd() .. "/" .. filepath, ":p")
+	end
 
-  -- Check if file is within buffer's directory
-  if vim.startswith(abs_filepath, buf_dir) then
-    -- Calculate relative path from buffer directory
-    local rel_path = vim.fn.fnamemodify(abs_filepath, ":.")
-    return rel_path
-  end
+	-- Check if file is within buffer's directory
+	if vim.startswith(abs_filepath, buf_dir) then
+		-- Calculate relative path from buffer directory
+		local rel_path = vim.fn.fnamemodify(abs_filepath, ":.")
+		return rel_path
+	end
 
-  -- Otherwise return relative to cwd
-  return vim.fn.fnamemodify(abs_filepath, ":~:.")
+	-- Otherwise return relative to cwd
+	return vim.fn.fnamemodify(abs_filepath, ":~:.")
 end
 
 -- Search files using fd (async)
 local function search_with_fd_async(query, config, callback)
-  if not command_exists("fd") then
-    callback({})
-    return nil
-  end
+	if not command_exists("fd") then
+		callback({})
+		return nil
+	end
 
-  local args = { "--type", "f" }
+	local args = { "--type", "f" }
 
-  if config.search_hidden then
-    table.insert(args, "--hidden")
-  end
+	if config.search_hidden then
+		table.insert(args, "--hidden")
+	end
 
-  -- Respect gitignore by default (don't use --no-ignore)
-  -- If search_gitignore is false, ignore gitignore files
-  if not config.search_gitignore then
-    table.insert(args, "--no-ignore")
-  end
+	-- Respect gitignore by default (don't use --no-ignore)
+	-- If search_gitignore is false, ignore gitignore files
+	if not config.search_gitignore then
+		table.insert(args, "--no-ignore")
+	end
 
-  table.insert(args, "--max-results")
-  table.insert(args, tostring(config.max_results))
+	table.insert(args, "--max-results")
+	table.insert(args, tostring(config.max_results))
 
-  -- Add query as pattern
-  if query and query ~= "" then
-    table.insert(args, query)
-  end
+	-- Add query as pattern
+	if query and query ~= "" then
+		table.insert(args, query)
+	end
 
-  local stdout = vim.loop.new_pipe(false)
-  local handle, pid
-  local results = {}
-  local stdout_data = ""
+	local stdout = vim.loop.new_pipe(false)
+	local handle, pid
+	local results = {}
+	local stdout_data = ""
 
-  handle, pid = vim.loop.spawn('fd', {
-    args = args,
-    stdio = { nil, stdout, nil }
-  }, vim.schedule_wrap(function(code, signal)
-    stdout:close()
-    if handle and not handle:is_closing() then
-      handle:close()
-    end
+	handle, pid = vim.loop.spawn(
+		"fd",
+		{
+			args = args,
+			stdio = { nil, stdout, nil },
+		},
+		vim.schedule_wrap(function(code, signal)
+			stdout:close()
+			if handle and not handle:is_closing() then
+				handle:close()
+			end
 
-    -- Process any remaining data
-    if stdout_data ~= "" then
-      for line in stdout_data:gmatch("([^\n]+)") do
-        if line ~= "" then
-          table.insert(results, line)
-        end
-      end
-    end
+			-- Process any remaining data
+			if stdout_data ~= "" then
+				for line in stdout_data:gmatch("([^\n]+)") do
+					if line ~= "" then
+						table.insert(results, line)
+					end
+				end
+			end
 
-    callback(results)
-  end))
+			callback(results)
+		end)
+	)
 
-  if not handle then
-    callback({})
-    return nil
-  end
+	if not handle then
+		callback({})
+		return nil
+	end
 
-  stdout:read_start(vim.schedule_wrap(function(err, data)
-    if err then
-      callback({})
-      return
-    end
+	stdout:read_start(vim.schedule_wrap(function(err, data)
+		if err then
+			callback({})
+			return
+		end
 
-    if data then
-      stdout_data = stdout_data .. data
-    end
-  end))
+		if data then
+			stdout_data = stdout_data .. data
+		end
+	end))
 
-  -- Return cancellation function
-  return function()
-    if handle and not handle:is_closing() then
-      handle:close()
-    end
-    if stdout and not stdout:is_closing() then
-      stdout:close()
-    end
-  end
+	-- Return cancellation function
+	return function()
+		if handle and not handle:is_closing() then
+			handle:close()
+		end
+		if stdout and not stdout:is_closing() then
+			stdout:close()
+		end
+	end
 end
 
 -- Search files using ripgrep (async)
 local function search_with_rg_async(query, config, callback)
-  if not command_exists("rg") then
-    callback({})
-    return nil
-  end
+	if not command_exists("rg") then
+		callback({})
+		return nil
+	end
 
-  -- First get all files, then filter with query
-  local args = { "--files" }
+	-- First get all files, then filter with query
+	local args = { "--files" }
 
-  if config.search_hidden then
-    table.insert(args, "--hidden")
-  end
+	if config.search_hidden then
+		table.insert(args, "--hidden")
+	end
 
-  if not config.search_gitignore then
-    table.insert(args, "--no-ignore")
-  end
+	if not config.search_gitignore then
+		table.insert(args, "--no-ignore")
+	end
 
-  local stdout = vim.loop.new_pipe(false)
-  local handle, pid
-  local all_files = {}
-  local stdout_data = ""
+	local stdout = vim.loop.new_pipe(false)
+	local handle, pid
+	local all_files = {}
+	local stdout_data = ""
 
-  handle, pid = vim.loop.spawn('rg', {
-    args = args,
-    stdio = { nil, stdout, nil }
-  }, vim.schedule_wrap(function(code, signal)
-    stdout:close()
-    if handle and not handle:is_closing() then
-      handle:close()
-    end
+	handle, pid = vim.loop.spawn(
+		"rg",
+		{
+			args = args,
+			stdio = { nil, stdout, nil },
+		},
+		vim.schedule_wrap(function(code, signal)
+			stdout:close()
+			if handle and not handle:is_closing() then
+				handle:close()
+			end
 
-    -- Process any remaining data
-    if stdout_data ~= "" then
-      for line in stdout_data:gmatch("([^\n]+)") do
-        if line ~= "" then
-          table.insert(all_files, line)
-        end
-      end
-    end
+			-- Process any remaining data
+			if stdout_data ~= "" then
+				for line in stdout_data:gmatch("([^\n]+)") do
+					if line ~= "" then
+						table.insert(all_files, line)
+					end
+				end
+			end
 
-    -- Filter files by query if provided
-    local results = {}
-    if query and query ~= "" then
-      for _, file in ipairs(all_files) do
-        if string.find(file:lower(), query:lower(), 1, true) then
-          table.insert(results, file)
-          if #results >= config.max_results then
-            break
-          end
-        end
-      end
-    else
-      -- Return limited results if no query
-      for i = 1, math.min(#all_files, config.max_results) do
-        table.insert(results, all_files[i])
-      end
-    end
+			-- Filter files by query if provided
+			local results = {}
+			if query and query ~= "" then
+				for _, file in ipairs(all_files) do
+					if string.find(file:lower(), query:lower(), 1, true) then
+						table.insert(results, file)
+						if #results >= config.max_results then
+							break
+						end
+					end
+				end
+			else
+				-- Return limited results if no query
+				for i = 1, math.min(#all_files, config.max_results) do
+					table.insert(results, all_files[i])
+				end
+			end
 
-    callback(results)
-  end))
+			callback(results)
+		end)
+	)
 
-  if not handle then
-    callback({})
-    return nil
-  end
+	if not handle then
+		callback({})
+		return nil
+	end
 
-  stdout:read_start(vim.schedule_wrap(function(err, data)
-    if err then
-      callback({})
-      return
-    end
+	stdout:read_start(vim.schedule_wrap(function(err, data)
+		if err then
+			callback({})
+			return
+		end
 
-    if data then
-      stdout_data = stdout_data .. data
-    end
-  end))
+		if data then
+			stdout_data = stdout_data .. data
+		end
+	end))
 
-  -- Return cancellation function
-  return function()
-    if handle and not handle:is_closing() then
-      handle:close()
-    end
-    if stdout and not stdout:is_closing() then
-      stdout:close()
-    end
-  end
+	-- Return cancellation function
+	return function()
+		if handle and not handle:is_closing() then
+			handle:close()
+		end
+		if stdout and not stdout:is_closing() then
+			stdout:close()
+		end
+	end
 end
 
 -- Main search function (async)
 function M.search_files_async(query, config, bufpath, callback)
-  local search_func
+	local search_func
 
-  if config.search_tool == "fd" then
-    search_func = search_with_fd_async
-  elseif config.search_tool == "rg" then
-    search_func = search_with_rg_async
-  else
-    -- Auto-detect: prefer fd, fallback to rg
-    if command_exists("fd") then
-      search_func = search_with_fd_async
-    elseif command_exists("rg") then
-      search_func = search_with_rg_async
-    else
-      vim.notify("blink-cmp-fuzzy-path: Neither 'fd' nor 'rg' found. Please install one.", vim.log.levels.WARN)
-      callback({})
-      return nil
-    end
-  end
+	if config.search_tool == "fd" then
+		search_func = search_with_fd_async
+	elseif config.search_tool == "rg" then
+		search_func = search_with_rg_async
+	else
+		-- Auto-detect: prefer fd, fallback to rg
+		if command_exists("fd") then
+			search_func = search_with_fd_async
+		elseif command_exists("rg") then
+			search_func = search_with_rg_async
+		else
+			vim.notify("blink-cmp-fuzzy-path: Neither 'fd' nor 'rg' found. Please install one.", vim.log.levels.WARN)
+			callback({})
+			return nil
+		end
+	end
 
-  -- Call search function and wrap callback to handle relative paths
-  local cancel_fn = search_func(query, config, function(files)
-    -- Convert to relative paths if configured
-    if config.relative_paths and bufpath then
-      files = vim.tbl_map(function(file)
-        return make_relative_path(file, bufpath)
-      end, files)
-    end
+	-- Call search function and wrap callback to handle relative paths
+	local cancel_fn = search_func(query, config, function(files)
+		-- Convert to relative paths if configured
+		if config.relative_paths and bufpath then
+			files = vim.tbl_map(function(file)
+				return make_relative_path(file, bufpath)
+			end, files)
+		end
 
-    callback(files)
-  end)
+		callback(files)
+	end)
 
-  return cancel_fn
+	return cancel_fn
 end
 
 return M

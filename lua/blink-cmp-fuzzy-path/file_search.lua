@@ -36,7 +36,13 @@ local function make_relative_path(filepath, bufpath, search_base)
 		return rel_path
 	end
 
-	-- Otherwise return relative to cwd (with ~ expansion)
+	-- Return path relative to the search base directory
+	-- Remove the base_dir prefix to get just the relative portion
+	if vim.startswith(abs_filepath, base_dir .. "/") then
+		return abs_filepath:sub(#base_dir + 2) -- +2 to skip the trailing "/"
+	end
+
+	-- Fallback to relative to cwd (with ~ expansion)
 	return vim.fn.fnamemodify(abs_filepath, ":~:.")
 end
 

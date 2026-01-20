@@ -90,16 +90,31 @@ function Source:get_completions(ctx, callback)
 		-- Convert to completion items
 		local items = {}
 		for index, file in ipairs(files) do
-			table.insert(items, {
+			-- Determine if this is a folder (has trailing slash)
+			local is_folder = vim.endswith(file, "/")
+			local kind = is_folder and vim.lsp.protocol.CompletionItemKind.Folder
+				or vim.lsp.protocol.CompletionItemKind.File
+
+			local item = {
 				label = file,
-				kind = vim.lsp.protocol.CompletionItemKind.File,
+				kind = kind,
 				insertText = file,
 				filterText = file,
 				-- Use lower sortText values to prioritize these results
 				-- Format: "0000", "0001", "0002" ensures they sort before most other sources
 				sortText = string.format("%04d", index),
 				score_offset = 5, -- Boost score for this source
-			})
+			}
+			
+			-- Add documentation to make folders more visible in completion menu
+			if is_folder then
+				item.documentation = {
+					kind = "markdown",
+					value = "📁 Directory",
+				}
+			end
+			
+			table.insert(items, item)
 		end
 
 		-- Call callback with results

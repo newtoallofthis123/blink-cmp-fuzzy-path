@@ -8,6 +8,7 @@ https://github.com/user-attachments/assets/dec72195-7088-4afd-b282-f77c8f880e42
 ## Features
 
 - 🎯 **Fuzzy file path completion** - Type `@` followed by a query to find files
+- 📁 **Optional folder search** - Include directories in search results (disabled by default)
 - 📝 **Filetype-specific** - Only activates in configured filetypes (default: markdown, json)
 - 🔍 **Fast search** - Uses `fd` or `ripgrep` for blazing-fast file discovery
 - 📍 **Relative paths** - Shows paths relative to your current buffer
@@ -50,12 +51,19 @@ Then register it with blink.cmp:
           name = 'Fuzzy Path',
           module = 'blink-cmp-fuzzy-path',
           score_offset = 0,
+          -- Optional: Configure the source here
+          opts = {
+            include_folders = false,  -- Set to true to include folders in results
+            max_results = 5,
+          },
         }
       }
     }
   }
 }
 ```
+
+> **Note:** You can configure the plugin either in the lazy.nvim `opts` (shown above in Installation) OR in the blink.cmp provider `opts`. The provider configuration takes precedence.
 
 ## Configuration
 
@@ -65,13 +73,58 @@ Default configuration:
 {
   filetypes = { "markdown", "json" },    -- Filetypes to attach to
   trigger_char = "@",                     -- Character that triggers completion
-  max_results = 5,                        -- Number of results to show
+  max_results = 5,                        -- Number of results to show (files + folders combined)
   search_tool = "fd",                     -- 'fd' or 'rg' (ripgrep)
-  search_hidden = false,                  -- Include hidden files
+  search_hidden = false,                  -- Include hidden files/folders
   search_gitignore = true,                -- Respect .gitignore
   relative_paths = true,                  -- Show relative paths from current buffer
+  include_folders = false,                -- Include folders in search results
 }
 ```
+
+### Folder Search
+
+By default, only files are shown in completion results. To include folders in search results, set `include_folders = true`:
+
+```lua
+{
+  'newtoallofthis123/blink-cmp-fuzzy-path',
+  opts = {
+    include_folders = true,  -- Enable folder search
+    max_results = 10,        -- Increase to show more files + folders
+  }
+}
+```
+
+Or configure it in the blink.cmp provider:
+
+```lua
+{
+  'saghen/blink.cmp',
+  opts = {
+    sources = {
+      providers = {
+        ['fuzzy-path'] = {
+          name = 'Fuzzy Path',
+          module = 'blink-cmp-fuzzy-path',
+          opts = {
+            include_folders = true,  -- Enable folder search
+            max_results = 10,
+          },
+        }
+      }
+    }
+  }
+}
+```
+
+**Important Notes:**
+- 📁 Folders are displayed with a trailing `/` (e.g., `src/`, `docs/`)
+- 📊 Folders appear before files in the completion list for easier navigation
+- 🔧 With `fd` tool: Full folder search support (recommended)
+- ⚠️  With `ripgrep`: Requires `fd` to be installed for folder search (shows a warning if not available)
+- 🔢 The `max_results` limit applies to the combined total of files and folders
+- 🔄 After changing the config, restart Neovim or run `:Lazy reload blink-cmp-fuzzy-path`
 
 ### Important: ClaudeCode and OpenCode Users
 
@@ -116,9 +169,10 @@ end, { desc = 'Set fuzzy search path' })
     filetypes = { "markdown", "json", "text" },
     trigger_char = "#",
     max_results = 10,
-    search_tool = "rg",
-    search_hidden = true,
+    search_tool = "fd",        -- Use fd for best performance
+    search_hidden = true,      -- Include hidden files/folders
     relative_paths = true,
+    include_folders = true,    -- Enable folder search
   }
 }
 ```
@@ -137,7 +191,15 @@ In a markdown file:
 See @read
 ```
 
-Typing `@read` will show suggestions like:
+**With `include_folders = false` (default):**
+Typing `@read` will show file suggestions like:
+- `README.md`
+- `docs/readme.md`
+- `src/readers/file_reader.lua`
+
+**With `include_folders = true`:**
+Typing `@read` will show both folders and files:
+- `src/readers/` (📁 folder)
 - `README.md`
 - `docs/readme.md`
 - `src/readers/file_reader.lua`
@@ -146,9 +208,9 @@ Typing `@read` will show suggestions like:
 
 1. **Trigger Detection**: When you type the trigger character (`@` by default), the plugin activates
 2. **Query Extraction**: Everything after `@` up to your cursor becomes the search query
-3. **File Search**: Uses `fd` or `ripgrep` to find files matching your query
+3. **File/Folder Search**: Uses `fd` or `ripgrep` to find files (and optionally folders) matching your query
 4. **Path Formatting**: Converts absolute paths to relative paths (if configured)
-5. **Completion**: Shows results in the blink.cmp completion menu
+5. **Completion**: Shows results in the blink.cmp completion menu with appropriate icons (files vs folders)
 
 ## Troubleshooting
 

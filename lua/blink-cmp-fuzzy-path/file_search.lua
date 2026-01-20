@@ -46,14 +46,14 @@ local function make_relative_path(filepath, bufpath, search_base)
 	return vim.fn.fnamemodify(abs_filepath, ":~:.")
 end
 
--- Search files using fd (async)
-local function search_with_fd_async(query, config, callback)
+-- Generic fd search function for files or directories
+local function search_with_fd_type_async(query, config, search_type, callback)
 	if not command_exists("fd") then
 		callback({})
 		return nil
 	end
 
-	local args = { "--type", "f" }
+	local args = { "--type", search_type }
 
 	if config.search_hidden then
 		table.insert(args, "--hidden")
@@ -101,6 +101,10 @@ local function search_with_fd_async(query, config, callback)
 			if stdout_data ~= "" then
 				for line in stdout_data:gmatch("([^\n]+)") do
 					if line ~= "" then
+						-- Add trailing slash to directories
+						if search_type == "d" and not vim.endswith(line, "/") then
+							line = line .. "/"
+						end
 						table.insert(results, line)
 					end
 				end
@@ -133,6 +137,84 @@ local function search_with_fd_async(query, config, callback)
 		end
 		if stdout and not stdout:is_closing() then
 			stdout:close()
+		end
+	end
+end
+
+-- Search files using fd (async)
+local function search_with_fd_async(query, config, callback)
+	if not command_exists("fd") then
+		callback({})
+		return nil
+	end
+
+	-- If folders are not included, just search for files
+	if not config.include_folders then
+		return search_with_fd_type_async(query, config, "f", callback)
+	end
+
+	-- Search both files and folders
+	local file_results = {}
+	local folder_results = {}
+	local completed_searches = 0
+	local cancel_funcs = {}
+
+	local function check_completion()
+		completed_searches = completed_searches + 1
+		if completed_searches == 2 then
+			-- Merge results: folders first, then files
+			local merged = {}
+			for _, folder in ipairs(folder_results) do
+				table.insert(merged, folder)
+			end
+			for _, file in ipairs(file_results) do
+				table.insert(merged, file)
+			end
+
+			-- Limit to max_results
+			local limited = {}
+			for i = 1, math.min(#merged, config.max_results) do
+				table.insert(limited, merged[i])
+			end
+
+			callback(limited)
+		end
+	end
+
+	-- Request more results from each search (files and folders separately)
+	-- This ensures we get a good mix of both when combined and limited to max_results
+	local search_config = vim.tbl_extend("force", config, {
+		max_results = config.max_results * 2,
+	})
+
+	-- Search for files
+	local cancel_files = search_with_fd_type_async(query, search_config, "f", function(results)
+		file_results = results
+		check_completion()
+	end)
+	if cancel_files then
+		table.insert(cancel_funcs, cancel_files)
+	else
+		-- If spawn failed, still need to count it as completed
+		check_completion()
+	end
+
+	-- Search for folders
+	local cancel_folders = search_with_fd_type_async(query, search_config, "d", function(results)
+		folder_results = results
+		check_completion()
+	end)
+	if cancel_folders then
+		table.insert(cancel_funcs, cancel_folders)
+	else
+		-- If spawn failed, still need to count it as completed
+		check_completion()
+	end
+
+	-- Return combined cancellation function
+	return function()
+		for _, cancel_fn in ipairs(cancel_funcs) do
+			cancel_fn()
 		end
 	end
 end
@@ -206,7 +288,36 @@ local function search_with_rg_async(query, config, callback)
 				end
 			end
 
-			callback(results)
+			-- If folders are included, try to use fd for folders
+			if config.include_folders and command_exists("fd") then
+				-- Search for folders using fd
+				search_with_fd_type_async(query, config, "d", function(folder_results)
+					-- Merge folders with file results
+					local merged = {}
+					for _, folder in ipairs(folder_results) do
+						table.insert(merged, folder)
+					end
+					for _, file in ipairs(results) do
+						table.insert(merged, file)
+					end
+
+					-- Limit to max_results
+					local limited = {}
+					for i = 1, math.min(#merged, config.max_results) do
+						table.insert(limited, merged[i])
+					end
+
+					callback(limited)
+				end)
+			else
+				if config.include_folders and not command_exists("fd") then
+					vim.notify(
+						"blink-cmp-fuzzy-path: Folder search with ripgrep requires 'fd' to be installed. Showing files only.",
+						vim.log.levels.WARN
+					)
+				end
+				callback(results)
+			end
 		end)
 	)
 

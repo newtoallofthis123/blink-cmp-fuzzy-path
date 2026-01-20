@@ -10,6 +10,7 @@ local defaults = {
 	search_gitignore = true,
 	relative_paths = true,
 	search_dir = nil, -- nil = use cwd, string = specific directory
+	include_folders = false, -- include folders in search results
 }
 
 -- Validate configuration
@@ -22,6 +23,7 @@ local function validate_config(config)
 		search_hidden = { config.search_hidden, "boolean" },
 		search_gitignore = { config.search_gitignore, "boolean" },
 		relative_paths = { config.relative_paths, "boolean" },
+		include_folders = { config.include_folders, "boolean" },
 		search_dir = {
 			config.search_dir,
 			function(v)
